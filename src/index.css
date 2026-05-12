@@ -763,3 +763,111 @@ textarea::placeholder { color: var(--text-dim); }
   font-size: 12px;
   color: var(--text);
 }
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .sidebar {
+    position: absolute;
+    height: 100%;
+    box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+    transform: translateX(0);
+    width: 260px;
+  }
+
+  .sidebar.collapsed {
+    transform: translateX(-100%);
+    width: 0;
+  }
+
+  .main-container {
+    width: 100%;
+  }
+
+  .topbar {
+    padding: 10px 12px;
+  }
+
+  .logo { font-size: 13px; }
+  .logo-icon { width: 20px; height: 24px; font-size: 12px; }
+
+  .msg-body {
+    font-size: 13px;
+    padding: 4px 15px 14px 15px;
+  }
+
+  .msg-attachment-img {
+    max-width: 100%;
+  }
+
+  .input-area {
+    padding: 10px 12px;
+  }
+}
+
+/* Renaming UI */
+.rename-input {
+  background: var(--surface3);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: 100%;
+  outline: none;
+}
+
+.edit-btn {
+  opacity: 0;
+  color: var(--text-dim);
+  transition: opacity 0.2s;
+  cursor: pointer;
+  padding: 4px;
+}
+.session-item:hover .edit-btn { opacity: 1; }
+.edit-btn:hover { color: var(--accent); }
+
+/* Camera UI */
+.camera-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.9);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  backdrop-filter: blur(8px);
+}
+
+.camera-preview {
+  width: 90%;
+  max-width: 600px;
+  border-radius: 12px;
+  border: 2px solid var(--accent);
+  background: #000;
+  transform: scaleX(-1); /* Mirror effect */
+}
+
+.camera-actions {
+  display: flex;
+  gap: 20px;
+}
+
+.cam-btn {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+
+.cam-btn:hover { transform: scale(1.1); }
+.cam-btn.close { background: var(--error); }

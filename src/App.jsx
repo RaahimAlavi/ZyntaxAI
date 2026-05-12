@@ -14,7 +14,9 @@ import {
   Copy,
   Check,
   Paperclip,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Camera,
+  Edit2
 } from 'lucide-react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -48,15 +50,20 @@ function App() {
   const [currentSessionName, setCurrentSessionName] = useState(() => {
     return localStorage.getItem('zyntax_current_session') || 'default';
   });
+  const [renamingSession, setRenamingSession] = useState(null);
+  const [newName, setNewName] = useState('');
+  
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('zyntax_theme') || 'dark';
   });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [searchQuery, setSearchQuery] = useState('');
   const [userInput, setUserInput] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState([]); // [{ name, data, type, isImage, isPDF, extractedText }]
+  const [attachedFiles, setAttachedFiles] = useState([]); 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  
   const [totalTokens, setTotalTokens] = useState(0);
   const [tokenSpeed, setTokenSpeed] = useState(0);
   const [sessionTime, setSessionTime] = useState(0);
@@ -66,6 +73,7 @@ function App() {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
   const sessionStartRef = useRef(Date.now());
 
   // --- Derived State ---
@@ -98,6 +106,57 @@ function App() {
   }, [conversation, isGenerating]);
 
   // --- Handlers ---
+  const startCamera = async () => {
+    setIsCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch (err) {
+      console.error("Camera error:", err);
+      setIsCameraOpen(false);
+    }
+  };
+
+  const stopCamera = () => {
+    const stream = videoRef.current?.srcObject;
+    stream?.getTracks().forEach(track => track.stop());
+    setIsCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const data = canvas.toDataURL('image/jpeg');
+    
+    setAttachedFiles(prev => [...prev, {
+      name: `Photo-${Date.now()}.jpg`,
+      data: data,
+      type: 'image/jpeg',
+      isImage: true,
+      extractedText: ''
+    }]);
+    stopCamera();
+  };
+
+  const handleRename = (oldName) => {
+    if (!newName.trim() || newName === oldName) {
+      setRenamingSession(null);
+      return;
+    }
+    setSessions(prev => {
+      const newSessions = { ...prev };
+      newSessions[newName] = newSessions[oldName];
+      delete newSessions[oldName];
+      return newSessions;
+    });
+    if (currentSessionName === oldName) setCurrentSessionName(newName);
+    setRenamingSession(null);
+    setNewName('');
+  };
+
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
@@ -169,10 +228,12 @@ function App() {
     setSessions(prev => ({ ...prev, [name]: [] }));
     setCurrentSessionName(name);
     setSearchQuery('');
+    if (window.innerWidth <= 768) setSidebarOpen(false);
   };
 
   const resumeSession = (name) => {
     setCurrentSessionName(name);
+    if (window.innerWidth <= 768) setSidebarOpen(false);
   };
 
   const deleteSession = (e, name) => {
@@ -362,6 +423,17 @@ function App() {
 
   return (
     <div className="root-wrap" style={{ display: 'flex', width: '100%', height: '100%' }}>
+      {/* Camera Overlay */}
+      {isCameraOpen && (
+        <div className="camera-overlay">
+          <video ref={videoRef} autoPlay className="camera-preview" />
+          <div className="camera-actions">
+            <button className="cam-btn close" onClick={stopCamera}><X /></button>
+            <button className="cam-btn" onClick={capturePhoto}><ImageIcon /></button>
+          </div>
+        </div>
+      )}
+
       <aside className={`sidebar ${!sidebarOpen ? 'collapsed' : ''}`}>
         <div className="sidebar-content">
           <div className="sidebar-header">
@@ -383,9 +455,28 @@ function App() {
             {filteredSessions.map(name => (
               <div key={name} className={`session-item ${name === currentSessionName ? 'active' : ''}`} onClick={() => resumeSession(name)}>
                 <MessageSquare size={14} />
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
-                {name !== 'default' && (
-                  <Trash2 className="delete-btn" size={14} onClick={(e) => deleteSession(e, name)} />
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  {renamingSession === name ? (
+                    <input 
+                      autoFocus 
+                      className="rename-input"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      onBlur={() => handleRename(name)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleRename(name)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                  )}
+                </div>
+                {renamingSession !== name && (
+                  <>
+                    <Edit2 size={12} className="edit-btn" onClick={(e) => { e.stopPropagation(); setRenamingSession(name); setNewName(name); }} />
+                    {name !== 'default' && (
+                      <Trash2 className="delete-btn" size={14} onClick={(e) => deleteSession(e, name)} />
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -498,6 +589,7 @@ function App() {
             <div className="input-row">
               <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
               <button className="upload-btn" onClick={() => fileInputRef.current?.click()} title="Upload files"><Paperclip size={18} /></button>
+              <button className="upload-btn" onClick={startCamera} title="Take photo"><Camera size={18} /></button>
               <textarea ref={textareaRef} placeholder="Type a message... (Shift+Enter for newline)" rows="1" value={userInput} onChange={(e) => { setUserInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} onKeyDown={handleKeyDown} autoFocus />
               <div className="input-actions">
                 <div className="key-hint">Enter to send<br />Shift+↵ newline</div>
