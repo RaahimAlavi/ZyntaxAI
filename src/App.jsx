@@ -18,7 +18,12 @@ import {
 } from 'lucide-react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import * as pdfjs from 'pdfjs-dist';
+import Tesseract from 'tesseract.js';
 import './App.css';
+
+// Set worker for PDF.js - Using a version that matches the installed package
+pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
 
 // --- Constants & Config ---
 const CONFIG = {
@@ -42,8 +47,9 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [userInput, setUserInput] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState([]); // [{ name, data, type, isImage }]
+  const [attachedFiles, setAttachedFiles] = useState([]); // [{ name, data, type, isImage, isPDF, extractedText }]
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [totalTokens, setTotalTokens] = useState(0);
   const [tokenSpeed, setTokenSpeed] = useState(0);
   const [sessionTime, setSessionTime] = useState(0);
@@ -55,54 +61,61 @@ function App() {
   const fileInputRef = useRef(null);
   const sessionStartRef = useRef(Date.now());
 
-  // --- Derived State ---
-  const conversation = sessions[currentSessionName] || [];
-
-  // --- Effects ---
-  useEffect(() => {
-    localStorage.setItem('zyntax_sessions', JSON.stringify(sessions));
-  }, [sessions]);
-
-  useEffect(() => {
-    localStorage.setItem('zyntax_current_session', currentSessionName);
-  }, [currentSessionName]);
-
-  useEffect(() => {
-    localStorage.setItem('zyntax_theme', theme);
-    if (theme === 'light') document.body.classList.add('light-mode');
-    else document.body.classList.remove('light-mode');
-  }, [theme]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSessionTime(Math.floor((Date.now() - sessionStartRef.current) / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [conversation, isGenerating]);
-
   // --- Handlers ---
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files);
-    const processedFiles = await Promise.all(files.map(async file => {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          resolve({
-            name: file.name,
-            data: e.target.result, // base64 string
-            type: file.type,
-            isImage: file.type.startsWith('image/')
-          });
-        };
-        reader.readAsDataURL(file);
-      });
-    }));
-    setAttachedFiles(prev => [...prev, ...processedFiles]);
-    e.target.value = ''; // Reset input
+    if (files.length === 0) return;
+    
+    setIsProcessingFile(true);
+    try {
+      const processedFiles = await Promise.all(files.map(async file => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const base64Data = e.target.result;
+            const fileData = {
+              name: file.name,
+              data: base64Data,
+              type: file.type,
+              isImage: file.type.startsWith('image/'),
+              isPDF: file.type === 'application/pdf',
+              extractedText: ''
+            };
+
+            // OCR for Images
+            if (fileData.isImage) {
+              try {
+                const { data: { text } } = await Tesseract.recognize(base64Data);
+                fileData.extractedText = text;
+              } catch (err) { console.error("OCR Error:", err); }
+            }
+
+            // Text Extraction for PDFs
+            if (fileData.isPDF) {
+              try {
+                const pdf = await pdfjs.getDocument({ data: atob(base64Data.split(',')[1]) }).promise;
+                let fullText = '';
+                for (let i = 1; i <= pdf.numPages; i++) {
+                  const page = await pdf.getPage(i);
+                  const content = await page.getTextContent();
+                  fullText += content.items.map(item => item.str).join(' ') + '\n';
+                }
+                fileData.extractedText = fullText;
+              } catch (err) { console.error("PDF Error:", err); }
+            }
+
+            resolve(fileData);
+          };
+          reader.readAsDataURL(file);
+        });
+      }));
+      setAttachedFiles(prev => [...prev, ...processedFiles]);
+    } catch (err) {
+      console.error("File processing failed:", err);
+    } finally {
+      setIsProcessingFile(false);
+      e.target.value = '';
+    }
   };
 
   const removeAttachment = (index) => {
@@ -184,20 +197,25 @@ function App() {
       
       if (msg.role === 'user') {
         const content = [];
-        if (msg.content) content.push({ type: 'text', text: msg.content });
+        let combinedText = msg.content || '';
         
+        // Append extracted text from files to the prompt for context
         msg.attachments?.forEach(file => {
+          if (file.extractedText) {
+            combinedText += `\n\n[Content from ${file.name}]:\n${file.extractedText}`;
+          }
+          
           if (file.isImage) {
             content.push({ 
               type: 'image_url', 
               image_url: { url: file.data } 
             });
-          } else {
-            content.push({ type: 'text', text: `[Attached File: ${file.name}]` });
           }
         });
         
-        apiMessages.push({ role: 'user', content: content.length > 1 ? content : msg.content });
+        if (combinedText) content.unshift({ type: 'text', text: combinedText });
+        
+        apiMessages.push({ role: 'user', content: content.length > 1 ? content : combinedText });
       } else {
         apiMessages.push({ role: msg.role, content: msg.content });
       }
@@ -472,6 +490,16 @@ function App() {
                       <span></span>
                       <span></span>
                       <span></span>
+                    </div>
+                  </div>
+                )}
+
+                {/* File Processing Indicator */}
+                {isProcessingFile && (
+                  <div className="system-msg-row">
+                    <div className="system-msg-body" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div className="typing-dots" style={{ opacity: 1 }}><span style={{ background: 'var(--accent)' }}></span></div>
+                      <span>Extracting text and processing files...</span>
                     </div>
                   </div>
                 )}
