@@ -454,7 +454,7 @@ function App() {
           <div className="session-list">
             {filteredSessions.map(name => (
               <div key={name} className={`session-item ${name === currentSessionName ? 'active' : ''}`} onClick={() => resumeSession(name)}>
-                <MessageSquare size={14} />
+                <MessageSquare size={18} />
                 <div style={{ flex: 1, overflow: 'hidden' }}>
                   {renamingSession === name ? (
                     <input 
@@ -473,14 +473,14 @@ function App() {
                 {renamingSession !== name && (
                   <div className="session-actions">
                     <Edit2 
-                      size={14} 
+                      size={18} 
                       className="action-btn" 
                       onClick={(e) => { e.stopPropagation(); setRenamingSession(name); setNewName(name); }} 
                       title="Rename"
                     />
                     {name !== 'default' && (
                       <Trash2 
-                        size={14} 
+                        size={18} 
                         className="action-btn delete" 
                         onClick={(e) => deleteSession(e, name)} 
                         title="Delete"
@@ -498,7 +498,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="sidebar-toggle" onClick={toggleSidebar}>
-              <Menu size={20} />
+              <Menu size={24} />
             </button>
             <div className="logo">
               <div className="logo-icon">Z</div>
@@ -510,8 +510,8 @@ function App() {
             <button className="clear-btn" onClick={clearMessages}>Clear</button>
           </div>
           <div className="status-bar">
-            <button className="clear-btn" onClick={toggleTheme} style={{ fontSize: '16px', padding: '4px 8px' }}>
-              {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+            <button className="clear-btn" onClick={toggleTheme} style={{ fontSize: '18px', padding: '6px 10px' }}>
+              {theme === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
             </button>
             <div className="status-pill">
               <div className="dot"></div>
@@ -598,13 +598,13 @@ function App() {
             )}
             <div className="input-row">
               <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
-              <button className="upload-btn" onClick={() => fileInputRef.current?.click()} title="Upload files"><Paperclip size={18} /></button>
-              <button className="upload-btn" onClick={startCamera} title="Take photo"><Camera size={18} /></button>
+              <button className="upload-btn" onClick={() => fileInputRef.current?.click()} title="Upload files"><Paperclip size={22} /></button>
+              <button className="upload-btn" onClick={startCamera} title="Take photo"><Camera size={22} /></button>
               <textarea ref={textareaRef} placeholder="Type a message... (Shift+Enter for newline)" rows="1" value={userInput} onChange={(e) => { setUserInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} onKeyDown={handleKeyDown} autoFocus />
               <div className="input-actions">
                 <div className="key-hint">Enter to send<br />Shift+↵ newline</div>
                 <button className="send-btn" onClick={handleSendMessage} title={isGenerating ? "Stop" : "Send"}>
-                  {isGenerating ? <Square size={16} fill="var(--error)" color="var(--error)" /> : <Send size={16} fill="#000" />}
+                  {isGenerating ? <Square size={20} fill="var(--error)" color="var(--error)" /> : <Send size={20} fill="#000" />}
                 </button>
               </div>
             </div>
