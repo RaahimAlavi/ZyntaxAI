@@ -431,36 +431,51 @@ function App() {
                 <p>Local AI running <strong style={{ color: 'var(--accent)' }}>{CONFIG.model}</strong>. Secure, private, and fast.</p>
               </div>
             ) : (
-              conversation.map((msg, i) => (
-                <div key={i} className={`msg-row ${msg.role} ${msg.isError ? 'error-row' : ''} ${msg.role === 'system' ? 'system-msg-row' : ''}`}>
-                  {msg.role !== 'system' && (
-                    <div className="msg-header">
-                      <span className={`msg-role-badge ${msg.role}`}>
-                        {msg.role === 'user' ? 'YOU' : `◈ ${CONFIG.model}`}
-                      </span>
-                      <span className="msg-meta">{msg.timestamp}</span>
-                      {msg.tokens && <span className="msg-tokens">{msg.tokens} tokens · {msg.speed} tok/s</span>}
+              <>
+                {conversation.map((msg, i) => (
+                  <div key={i} className={`msg-row ${msg.role} ${msg.isError ? 'error-row' : ''} ${msg.role === 'system' ? 'system-msg-row' : ''}`}>
+                    {msg.role !== 'system' && (
+                      <div className="msg-header">
+                        <span className={`msg-role-badge ${msg.role}`}>
+                          {msg.role === 'user' ? 'YOU' : `◈ ${CONFIG.model}`}
+                        </span>
+                        <span className="msg-meta">{msg.timestamp}</span>
+                        {msg.tokens && <span className="msg-tokens">{msg.tokens} tokens · {msg.speed} tok/s</span>}
+                      </div>
+                    )}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="msg-attachments">
+                        {msg.attachments.map((file, idx) => (
+                          file.isImage ? (
+                            <img key={idx} src={file.data} alt="attachment" className="msg-attachment-img" />
+                          ) : (
+                            <div key={idx} className="msg-attachment-file">
+                              <Paperclip size={14} /> <span>{file.name}</span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    )}
+                    <div 
+                      className={msg.role === 'system' ? 'system-msg-body' : 'msg-body'}
+                      dangerouslySetInnerHTML={msg.role === 'system' ? { __html: msg.content } : renderContent(msg.content)}
+                    />
+                  </div>
+                ))}
+                
+                {/* Thinking Indicator */}
+                {isGenerating && conversation[conversation.length - 1]?.role === 'user' && (
+                  <div className="typing-row">
+                    <span className="msg-role-badge assistant" style={{ fontSize: '9px', padding: '2px 7px' }}>AI</span>
+                    <span className="typing-label">thinking</span>
+                    <div className="typing-dots">
+                      <span></span>
+                      <span></span>
+                      <span></span>
                     </div>
-                  )}
-                  {msg.attachments && msg.attachments.length > 0 && (
-                    <div className="msg-attachments">
-                      {msg.attachments.map((file, idx) => (
-                        file.isImage ? (
-                          <img key={idx} src={file.data} alt="attachment" className="msg-attachment-img" />
-                        ) : (
-                          <div key={idx} className="msg-attachment-file">
-                            <Paperclip size={14} /> <span>{file.name}</span>
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  )}
-                  <div 
-                    className={msg.role === 'system' ? 'system-msg-body' : 'msg-body'}
-                    dangerouslySetInnerHTML={msg.role === 'system' ? { __html: msg.content } : renderContent(msg.content)}
-                  />
-                </div>
-              ))
+                  </div>
+                )}
+              </>
             )}
             <div ref={messagesEndRef} />
           </div>
