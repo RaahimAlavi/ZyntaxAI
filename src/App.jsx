@@ -471,12 +471,22 @@ function App() {
                   )}
                 </div>
                 {renamingSession !== name && (
-                  <>
-                    <Edit2 size={12} className="edit-btn" onClick={(e) => { e.stopPropagation(); setRenamingSession(name); setNewName(name); }} />
+                  <div className="session-actions">
+                    <Edit2 
+                      size={14} 
+                      className="action-btn" 
+                      onClick={(e) => { e.stopPropagation(); setRenamingSession(name); setNewName(name); }} 
+                      title="Rename"
+                    />
                     {name !== 'default' && (
-                      <Trash2 className="delete-btn" size={14} onClick={(e) => deleteSession(e, name)} />
+                      <Trash2 
+                        size={14} 
+                        className="action-btn delete" 
+                        onClick={(e) => deleteSession(e, name)} 
+                        title="Delete"
+                      />
                     )}
-                  </>
+                  </div>
                 )}
               </div>
             ))}
