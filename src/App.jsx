@@ -18,12 +18,12 @@ import {
 } from 'lucide-react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import * as pdfjs from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist';
 import Tesseract from 'tesseract.js';
 import './App.css';
 
-// Set worker for PDF.js - Using a version that matches the installed package
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+// Initialize PDF.js worker using a stable version
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@5.7.284/build/pdf.worker.min.mjs`;
 
 // --- Constants & Config ---
 const CONFIG = {
@@ -33,10 +33,17 @@ const CONFIG = {
 };
 
 function App() {
+  const [error, setError] = useState(null);
+  
   // --- State ---
   const [sessions, setSessions] = useState(() => {
-    const saved = localStorage.getItem('zyntax_sessions');
-    return saved ? JSON.parse(saved) : { default: [] };
+    try {
+      const saved = localStorage.getItem('zyntax_sessions');
+      return saved ? JSON.parse(saved) : { default: [] };
+    } catch (e) {
+      console.error("Session load error:", e);
+      return { default: [] };
+    }
   });
   const [currentSessionName, setCurrentSessionName] = useState(() => {
     return localStorage.getItem('zyntax_current_session') || 'default';
@@ -61,6 +68,35 @@ function App() {
   const fileInputRef = useRef(null);
   const sessionStartRef = useRef(Date.now());
 
+  // --- Derived State ---
+  const conversation = sessions[currentSessionName] || [];
+
+  // --- Effects ---
+  useEffect(() => {
+    localStorage.setItem('zyntax_sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('zyntax_current_session', currentSessionName);
+  }, [currentSessionName]);
+
+  useEffect(() => {
+    localStorage.setItem('zyntax_theme', theme);
+    if (theme === 'light') document.body.classList.add('light-mode');
+    else document.body.classList.remove('light-mode');
+  }, [theme]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSessionTime(Math.floor((Date.now() - sessionStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversation, isGenerating]);
+
   // --- Handlers ---
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files);
@@ -68,11 +104,14 @@ function App() {
     
     setIsProcessingFile(true);
     try {
-      const processedFiles = await Promise.all(files.map(async file => {
+      const processedFiles = await Promise.all(files.map(async (file) => {
         return new Promise((resolve) => {
           const reader = new FileReader();
-          reader.onload = async (e) => {
-            const base64Data = e.target.result;
+          reader.onerror = () => resolve(null);
+          reader.onload = async (event) => {
+            const base64Data = event.target.result;
+            if (!base64Data) return resolve(null);
+
             const fileData = {
               name: file.name,
               data: base64Data,
@@ -82,18 +121,13 @@ function App() {
               extractedText: ''
             };
 
-            // OCR for Images
-            if (fileData.isImage) {
-              try {
+            try {
+              if (fileData.isImage) {
                 const { data: { text } } = await Tesseract.recognize(base64Data);
                 fileData.extractedText = text;
-              } catch (err) { console.error("OCR Error:", err); }
-            }
-
-            // Text Extraction for PDFs
-            if (fileData.isPDF) {
-              try {
-                const pdf = await pdfjs.getDocument({ data: atob(base64Data.split(',')[1]) }).promise;
+              } else if (fileData.isPDF) {
+                const binaryStr = atob(base64Data.split(',')[1]);
+                const pdf = await pdfjsLib.getDocument({ data: binaryStr }).promise;
                 let fullText = '';
                 for (let i = 1; i <= pdf.numPages; i++) {
                   const page = await pdf.getPage(i);
@@ -101,15 +135,16 @@ function App() {
                   fullText += content.items.map(item => item.str).join(' ') + '\n';
                 }
                 fileData.extractedText = fullText;
-              } catch (err) { console.error("PDF Error:", err); }
+              }
+            } catch (innerErr) {
+              console.warn("Extraction failed for", file.name, innerErr);
             }
-
             resolve(fileData);
           };
           reader.readAsDataURL(file);
         });
       }));
-      setAttachedFiles(prev => [...prev, ...processedFiles]);
+      setAttachedFiles(prev => [...prev, ...processedFiles.filter(f => f !== null)]);
     } catch (err) {
       console.error("File processing failed:", err);
     } finally {
@@ -166,7 +201,6 @@ function App() {
     const text = userInput.trim();
     if (!text && attachedFiles.length === 0) return;
 
-    // Command handling
     if (text.startsWith('/') && attachedFiles.length === 0) {
       handleSlashCommand(text);
       setUserInput('');
@@ -181,40 +215,23 @@ function App() {
     };
     
     const updatedConversation = [...conversation, newUserMessage];
-    
     setSessions(prev => ({ ...prev, [currentSessionName]: updatedConversation }));
     setUserInput('');
     setAttachedFiles([]);
     setIsGenerating(true);
 
-    // Format for OpenAI Vision API if there are images
-    const apiMessages = systemPrompt 
-      ? [{ role: 'system', content: systemPrompt }]
-      : [];
+    const apiMessages = systemPrompt ? [{ role: 'system', content: systemPrompt }] : [];
 
     updatedConversation.forEach(msg => {
       if (msg.role === 'system') return;
-      
       if (msg.role === 'user') {
         const content = [];
         let combinedText = msg.content || '';
-        
-        // Append extracted text from files to the prompt for context
         msg.attachments?.forEach(file => {
-          if (file.extractedText) {
-            combinedText += `\n\n[Content from ${file.name}]:\n${file.extractedText}`;
-          }
-          
-          if (file.isImage) {
-            content.push({ 
-              type: 'image_url', 
-              image_url: { url: file.data } 
-            });
-          }
+          if (file.extractedText) combinedText += `\n\n[Content from ${file.name}]:\n${file.extractedText}`;
+          if (file.isImage) content.push({ type: 'image_url', image_url: { url: file.data } });
         });
-        
         if (combinedText) content.unshift({ type: 'text', text: combinedText });
-        
         apiMessages.push({ role: 'user', content: content.length > 1 ? content : combinedText });
       } else {
         apiMessages.push({ role: msg.role, content: msg.content });
@@ -235,11 +252,7 @@ function App() {
           'ngrok-skip-browser-warning': 'true'
         },
         signal: abortControllerRef.current.signal,
-        body: JSON.stringify({
-          model: CONFIG.model,
-          messages: apiMessages,
-          stream: true
-        })
+        body: JSON.stringify({ model: CONFIG.model, messages: apiMessages, stream: true })
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -247,8 +260,6 @@ function App() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-
-      // Temporary state for the streaming message
       let streamingMessage = { 
         role: 'assistant', 
         content: '', 
@@ -260,7 +271,6 @@ function App() {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop();
@@ -268,7 +278,6 @@ function App() {
         for (const line of lines) {
           const cleanedLine = line.trim();
           if (!cleanedLine || cleanedLine === 'data: [DONE]') continue;
-
           if (cleanedLine.startsWith('data: ')) {
             try {
               const data = JSON.parse(cleanedLine.slice(6));
@@ -278,21 +287,14 @@ function App() {
                 currentTokenCount++;
                 const elapsed = (Date.now() - startTime) / 1000;
                 const speed = (currentTokenCount / elapsed).toFixed(1);
-                
                 streamingMessage = { ...streamingMessage, content: fullText, tokens: currentTokenCount, speed };
-                
-                // Real-time update
-                setSessions(prev => ({
-                  ...prev,
-                  [currentSessionName]: [...updatedConversation, streamingMessage]
-                }));
+                setSessions(prev => ({ ...prev, [currentSessionName]: [...updatedConversation, streamingMessage] }));
                 setTokenSpeed(speed);
               }
             } catch (e) { console.warn(e); }
           }
         }
       }
-
       setTotalTokens(prev => prev + currentTokenCount);
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -309,7 +311,6 @@ function App() {
     const [action, ...args] = cmd.split(' ');
     const arg = args.join(' ').trim();
     let sysMsg = '';
-
     switch (action.toLowerCase()) {
       case '/new':
         if (arg) {
@@ -322,16 +323,10 @@ function App() {
         clearMessages();
         sysMsg = 'Session cleared.';
         break;
-      // Add other commands as needed
-      default:
-        sysMsg = `Unknown command: ${action}`;
+      default: sysMsg = `Unknown command: ${action}`;
     }
-
     if (sysMsg) {
-      setSessions(prev => ({
-        ...prev,
-        [currentSessionName]: [...prev[currentSessionName], { role: 'system', content: sysMsg }]
-      }));
+      setSessions(prev => ({ ...prev, [currentSessionName]: [...prev[currentSessionName], { role: 'system', content: sysMsg }] }));
     }
   };
 
@@ -342,7 +337,6 @@ function App() {
     }
   };
 
-  // --- Render Helpers ---
   const formatTime = (s) => {
     const m = Math.floor(s / 60);
     return m > 0 ? `${m}m${s % 60}s` : `${s}s`;
@@ -356,9 +350,18 @@ function App() {
   const sortedSessions = Object.keys(sessions).reverse();
   const filteredSessions = sortedSessions.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()));
 
+  if (error) {
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: 'var(--error)' }}>
+        <h1>Something went wrong</h1>
+        <p>{error.message}</p>
+        <button onClick={() => window.location.reload()} className="clear-btn">Reload Page</button>
+      </div>
+    );
+  }
+
   return (
     <div className="root-wrap" style={{ display: 'flex', width: '100%', height: '100%' }}>
-      {/* Sidebar */}
       <aside className={`sidebar ${!sidebarOpen ? 'collapsed' : ''}`}>
         <div className="sidebar-content">
           <div className="sidebar-header">
@@ -378,19 +381,11 @@ function App() {
           </div>
           <div className="session-list">
             {filteredSessions.map(name => (
-              <div 
-                key={name}
-                className={`session-item ${name === currentSessionName ? 'active' : ''}`}
-                onClick={() => resumeSession(name)}
-              >
+              <div key={name} className={`session-item ${name === currentSessionName ? 'active' : ''}`} onClick={() => resumeSession(name)}>
                 <MessageSquare size={14} />
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
                 {name !== 'default' && (
-                  <Trash2 
-                    className="delete-btn" 
-                    size={14} 
-                    onClick={(e) => deleteSession(e, name)}
-                  />
+                  <Trash2 className="delete-btn" size={14} onClick={(e) => deleteSession(e, name)} />
                 )}
               </div>
             ))}
@@ -398,9 +393,7 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
       <div className="main-container">
-        {/* Topbar */}
         <header className="topbar">
           <div className="topbar-left">
             <button className="sidebar-toggle" onClick={toggleSidebar}>
@@ -420,7 +413,7 @@ function App() {
               {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
             </button>
             <div className="status-pill">
-              <div className={`dot ${!CONFIG.host ? 'offline' : ''}`}></div>
+              <div className="dot"></div>
               <span>{isGenerating ? 'Generating...' : 'Connected'}</span>
             </div>
             <div className="stat">tokens <span>{totalTokens}</span></div>
@@ -428,18 +421,11 @@ function App() {
           </div>
         </header>
 
-        {/* System Bar */}
         <div className="sys-panel">
           <span className="sys-label">⚡ system</span>
-          <input 
-            className="sys-input" 
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder="System prompt..."
-          />
+          <input className="sys-input" value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="System prompt..." />
         </div>
 
-        {/* Messages */}
         <div className="terminal-wrap">
           <div className="messages">
             {conversation.length === 0 ? (
@@ -474,27 +460,16 @@ function App() {
                         ))}
                       </div>
                     )}
-                    <div 
-                      className={msg.role === 'system' ? 'system-msg-body' : 'msg-body'}
-                      dangerouslySetInnerHTML={msg.role === 'system' ? { __html: msg.content } : renderContent(msg.content)}
-                    />
+                    <div className={msg.role === 'system' ? 'system-msg-body' : 'msg-body'} dangerouslySetInnerHTML={msg.role === 'system' ? { __html: msg.content } : renderContent(msg.content)} />
                   </div>
                 ))}
-                
-                {/* Thinking Indicator */}
                 {isGenerating && conversation[conversation.length - 1]?.role === 'user' && (
                   <div className="typing-row">
                     <span className="msg-role-badge assistant" style={{ fontSize: '9px', padding: '2px 7px' }}>AI</span>
                     <span className="typing-label">thinking</span>
-                    <div className="typing-dots">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                    </div>
+                    <div className="typing-dots"><span></span><span></span><span></span></div>
                   </div>
                 )}
-
-                {/* File Processing Indicator */}
                 {isProcessingFile && (
                   <div className="system-msg-row">
                     <div className="system-msg-body" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -508,61 +483,26 @@ function App() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
           <div className="input-area">
             {attachedFiles.length > 0 && (
               <div className="attachment-previews">
                 {attachedFiles.map((file, idx) => (
                   <div key={idx} className="attachment-preview">
-                    {file.isImage ? (
-                      <img src={file.data} alt="preview" />
-                    ) : (
-                      <div className="file-icon-preview"><Paperclip size={16} /></div>
-                    )}
-                    <button className="remove-attachment" onClick={() => removeAttachment(idx)}>
-                      <X size={10} />
-                    </button>
+                    {file.isImage ? <img src={file.data} alt="preview" /> : <div className="file-icon-preview"><Paperclip size={16} /></div>}
+                    <button className="remove-attachment" onClick={() => removeAttachment(idx)}><X size={10} /></button>
                     <span className="file-name-tooltip">{file.name}</span>
                   </div>
                 ))}
               </div>
             )}
             <div className="input-row">
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                style={{ display: 'none' }} 
-                multiple 
-                onChange={handleFileSelect}
-              />
-              <button 
-                className="upload-btn" 
-                onClick={() => fileInputRef.current?.click()}
-                title="Upload files"
-              >
-                <Paperclip size={18} />
-              </button>
-              <textarea 
-                ref={textareaRef}
-                placeholder="Type a message... (Shift+Enter for newline)" 
-                rows="1" 
-                value={userInput}
-                onChange={(e) => {
-                  setUserInput(e.target.value);
-                  e.target.style.height = 'auto';
-                  e.target.style.height = e.target.scrollHeight + 'px';
-                }}
-                onKeyDown={handleKeyDown}
-                autoFocus
-              />
+              <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileSelect} />
+              <button className="upload-btn" onClick={() => fileInputRef.current?.click()} title="Upload files"><Paperclip size={18} /></button>
+              <textarea ref={textareaRef} placeholder="Type a message... (Shift+Enter for newline)" rows="1" value={userInput} onChange={(e) => { setUserInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} onKeyDown={handleKeyDown} autoFocus />
               <div className="input-actions">
                 <div className="key-hint">Enter to send<br />Shift+↵ newline</div>
                 <button className="send-btn" onClick={handleSendMessage} title={isGenerating ? "Stop" : "Send"}>
-                  {isGenerating ? (
-                    <Square size={16} fill="var(--error)" color="var(--error)" />
-                  ) : (
-                    <Send size={16} fill="#000" />
-                  )}
+                  {isGenerating ? <Square size={16} fill="var(--error)" color="var(--error)" /> : <Send size={16} fill="#000" />}
                 </button>
               </div>
             </div>
